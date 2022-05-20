@@ -28,4 +28,9 @@ public class DatabaseClass {
         }
 	}
 
+	public void saveRegisterdUser(String phoneNumber) {
+		// TODO Auto-generated method stub
+		
+	}
+
 }
