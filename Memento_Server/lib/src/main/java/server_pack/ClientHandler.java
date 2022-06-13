@@ -18,6 +18,7 @@ import java.sql.Blob;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.Arrays;
 import java.util.Random;
 
 import org.apache.commons.codec.binary.Base64;
@@ -68,22 +69,27 @@ public class ClientHandler extends Thread{
 			// Tar emot val frï¿½n klienten
 				String command = in.readUTF();
 				System.out.println("Command '"+ command+ "' receved from " + socket.getRemoteSocketAddress());
-				switch (command.substring(0, 3)) {
+				switch (command) {
 				case "REG":
-					registration();
+					registration(in, out);
+					break;
+				case "UPI":
+					updateInvites(in, out);
 					break;
 				case "UPD":
-					updateInvites();
-					updateMedia();
+					updateMedia(in, out);
 					break;
 				case "INV":
-					invite();
+					invite(in, out);
 					break;
 				case "SEN":
-					sendData();
+					sendData(in);
 					break;
 				case "ACC":
-					acceptInvite();
+					acceptInvite(in, out);
+					break;
+				case "DEC":
+					declineInvite(in, out);
 					break;
 
 				default:
@@ -96,61 +102,14 @@ public class ClientHandler extends Thread{
 	
 		catch (IOException | SQLException ioe)
 		{
+			ioe.printStackTrace();
 			System.out.println("No valid command received");
-			//return;
+			return;
 		}
 	}
 	
-	private void acceptInvite() throws IOException, SQLException {
-		// TODO Auto-generated method stub
-		Timestamp newTimestamp = new Timestamp(new java.util.Date().getTime());
-		int groupId = in.readInt();
-		databaseClass.getUpdates(groupId, null, newTimestamp);
-	}
-	private void updateInvites() throws SQLException, IOException {
-		// TODO Auto-generated method stub
-		String phoneNumber = in.readUTF();
-		ResultSet inviteSet = databaseClass.getPendingInvites(phoneNumber);
-		while (inviteSet.next()) {
-			out.writeInt(inviteSet.getInt("GroupId"));
-			out.writeUTF(inviteSet.getString("Name"));
-			out.writeBoolean(inviteSet.getBoolean("Admin"));
-		}
-		out.writeUTF("END");
-	}
-	private void sendData() throws IOException {
-		// TODO Auto-generated method stub
-		String phonenumber = in.readUTF();
-		int groupId = in.readInt();
-		byte[] media = in.readAllBytes();// Base64.decodeBase64(in.readAllBytes());
-		String category = in.readUTF();
-		databaseClass.setData(phonenumber, groupId, media, category);
-	}
-	
-	private void invite() throws IOException, SQLException {
-		// TODO Auto-generated method stub
-		String phoneNumber = in.readUTF();
-		int groupId = in.readInt();
-		String groupName = in.readUTF();
-		boolean admin = in.readBoolean();
-		databaseClass.storePendingInvites(phoneNumber, groupId, groupName, admin);
-		
-	}
-	
-	private void updateMedia() throws IOException, SQLException {
-		// TODO Auto-generated method stub
-		int groupId = in.readInt();
-		Timestamp oldTimestamp = Timestamp.valueOf(in.readUTF());
-		Timestamp newTimestamp = new Timestamp(new java.util.Date().getTime());
-		ResultSet updateSet = databaseClass.getUpdates(groupId, oldTimestamp, newTimestamp);
-		while (updateSet.next()) {
-			out.write(updateSet.getBytes("Data"));
-			out.writeUTF(updateSet.getString("Category"));
-		}
-		out.writeUTF(newTimestamp.toString());
-	}
-	
-	public void registration() throws IOException {
+	private void registration(DataInputStream in, DataOutputStream out) throws IOException {
+			
 		String phonenumber = in.readUTF();
 		String code = getRandomCode();
 		boolean smsSent;
@@ -158,27 +117,130 @@ public class ClientHandler extends Thread{
 		if(!smsSent) {
 			out.writeUTF("ERR");	// Error sending SMS
 			out.flush();
+			in.readUTF();
 		} else if(smsSent) {
 			if(in.readUTF().equals(code)) {
-				out.writeUTF("REG"+phonenumber);	// If user entered the code correctly
-				out.flush();
+				try {
+					databaseClass.register(phonenumber);
+					out.writeUTF("REG"+phonenumber);	// If user entered the code correctly
+					out.flush();
+				} catch (SQLException e) {
+					e.printStackTrace();
+				}
+				
 			} else {
 				out.writeUTF("ERR"); 	// If user failed to enter the right code
 				out.flush();
+				in.readUTF();
 			}
 		}
 	}
 	
-	public boolean sendCode(String code, String phoneNumber) {
-		//SMSVerificationClass smsVerificationClass = new SMSVerificationClass();
-	//	return smsVerificationClass.sendCode(code, phoneNumber);	
-		return false;
+	private void updateInvites(DataInputStream in, DataOutputStream out) throws SQLException, IOException {
+		String phoneNumber = in.readUTF();
+		ResultSet inviteSet = databaseClass.getPendingInvites(phoneNumber);
+		while (inviteSet.next()) {
+			ResultSet groupInfo = databaseClass.getDeceasedInfo(inviteSet.getInt("group_id"));
+			if (groupInfo.next()) {
+				out.writeUTF(groupInfo.getString("name"));
+				out.writeInt(groupInfo.getInt("group_id"));	
+				out.writeUTF(groupInfo.getString("birth_date"));
+				out.writeUTF(groupInfo.getString("deceased_date"));	
+				out.writeBoolean(inviteSet.getBoolean("admin"));
+			}
+		}
+		out.writeUTF("END");
+		out.flush();
 	}
 	
-	public static String getRandomCode() {
+	private void updateMedia(DataInputStream in, DataOutputStream out) throws IOException, SQLException {
+		String phoneNumber = in.readUTF();
+		int groupId = in.readInt();
+		Timestamp oldTimestamp = Timestamp.valueOf(in.readUTF());
+		Timestamp newTimestamp = new Timestamp(new java.util.Date().getTime());
+		ResultSet updateSet = databaseClass.getUpdates(phoneNumber, groupId, oldTimestamp);
+		while (updateSet.next()) {
+			String type = updateSet.getString("data_type");
+			out.writeUTF(type);
+			out.writeInt(updateSet.getInt("data_size"));
+			out.write(updateSet.getBytes("data"));
+			if(type.equals("IMG") | type.equals("VID")) {
+				String cate = updateSet.getString("category");
+				out.writeUTF(cate);
+			} 
+		}
+		out.writeUTF("END");
+		out.writeUTF(newTimestamp.toString());
+		out.flush();
+	}
+	
+	private void invite(DataInputStream in, DataOutputStream out) throws IOException, SQLException {
+		String groupName = null;
+		String bDay = null;
+		String dDay = null;
+		String inviter = in.readUTF();
+		String phoneNumber = in.readUTF();
+		int groupId = in.readInt();
+		boolean admin = in.readBoolean();
+		if(groupId == 0) {
+			groupName = in.readUTF();
+			bDay = in.readUTF();
+			dDay = in.readUTF();
+		}
+		
+		if(databaseClass.isRegesterdUser(phoneNumber)) {
+		
+			groupId = databaseClass.membersOfGroup(inviter, phoneNumber, groupId, admin, groupName, bDay, dDay);
+			out.writeInt(groupId);
+			out.flush();
+		} else {
+			out.writeUTF("ERR");
+			out.flush();
+		}
+		
+	}
+		
+	private void sendData(DataInputStream in) throws IOException, SQLException {
+		int length;
+		String phonenumber = in.readUTF();
+		int groupId = in.readInt();
+		String dataType = in.readUTF();
+		if(dataType.equals("wall")) {
+			String media = in.readUTF(); 
+			databaseClass.setData(phonenumber, groupId, dataType, media.getBytes(), null);
+		} else {
+			length = in.readInt();
+			byte[] media = new byte[length];
+			in.readFully(media);
+			String category = in.readUTF();
+			databaseClass.setData(phonenumber, groupId, dataType, media, category);
+		}
+		
+	}
+	
+	private void acceptInvite(DataInputStream in, DataOutputStream out) throws IOException, SQLException {
+		String phoneNumber = in.readUTF();
+		int groupId = in.readInt();
+		databaseClass.acceptInvite(phoneNumber, groupId);
+	}
+		
+	private void declineInvite(DataInputStream in, DataOutputStream out) throws IOException, SQLException {
+		String phoneNumber = in.readUTF();
+		int groupId = in.readInt();
+		databaseClass.declineInvite(phoneNumber, groupId);
+	}
+	
+	
+	
+	private boolean sendCode(String code, String phoneNumber) {
+		SMSVerificationClass smsVerificationClass = new SMSVerificationClass();
+		return smsVerificationClass.sendCode(code, phoneNumber);	
+		//return true;
+	}
+	
+	private static String getRandomCode() {
 		Random random = new Random();
 		int code = random.nextInt(999999);
-		
 		return String.format("%06d", code);
 	}
 	
@@ -198,7 +260,3 @@ public class ClientHandler extends Thread{
 	}
 	
 }
-
-	
-
-

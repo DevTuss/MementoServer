@@ -10,64 +10,75 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 public class DatabaseClass {
-	Statement statement;
-	Connection databaseConnection;
-	//private static Connection connection;
+	private Statement statement;
+	private Connection databaseConnection;
 	public DatabaseClass() {
-		// TODO Auto-generated constructor stub
 		try {
 			databaseConnection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/postgres", "postgres", "Muffin88");
 			if(databaseConnection.isValid(0)) {
-			    System.out.println("Connected to PostgreSQL database!");
+			    
 			    statement = databaseConnection.createStatement();
+			    setTables();
 			}
 		} catch (SQLException e1) {
-			// TODO Auto-generated catch block
 			e1.printStackTrace();
 		}
 	}
 	
-	public boolean setData(String phonenumber, int groupId, byte[] media, String category) {
-		// TODO Auto-generated method stub
-		int dataSize = media.length;
-		Timestamp timestamp = new Timestamp(new java.util.Date().getTime());
-		try {
-			statement.execute("CREATE TABLE IF NOT EXISTS public.shared_data"
-					+ " Time timestamp NOT NULL,"
-					+ " GroupId varchar(10) NOT NULL,"
-					+ " Data varbinary(8000),"
-					+ " Category varchar(20),"
-					+ " DataSize int,"
-					+ " PRIMARY KEY (Time, GroupId)");
-			String sqlString = "INSERT INTO public.shared_data (Time, GroupId, Data) VALUES(?, ?, ?, ?, ?)";
-			PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
-			pst.setTimestamp(1, timestamp);
-			pst.setInt(2, groupId);
-			pst.setBytes(3, media);
-			pst.setString(4, category);
-			pst.setLong(5, dataSize);
-			if(pst.executeLargeUpdate() > 0) {
-				return true;
-			} else {
-				return false;
-			}
-		} catch (SQLException e) {
-			e.printStackTrace();
-			return false;
-		}
+	public void setTables() throws SQLException {
+		
+		statement.execute("CREATE TABLE IF NOT EXISTS public.users"
+				+ "(phone_number varchar(10) not NULL, "
+				+ " PRIMARY KEY (phone_number))");
+		
+		statement.execute("CREATE TABLE IF NOT EXISTS public.deceased"
+				+ " (group_id INT NOT NULL GENERATED ALWAYS AS IDENTITY,"
+				+ " name varchar(30) NOT NULL,"
+				+ " birth_date varchar(12),"
+				+ " deceased_date varchar(12),"
+				+ " PRIMARY KEY(group_id))");
+		
+		statement.execute("CREATE TABLE IF NOT EXISTS public.shared_data"
+				+ " (time timestamp NOT NULL,"
+				+ " phone_number varchar(10) REFERENCES public.users (phone_number),"
+				+ " group_id int REFERENCES public.deceased (group_id),"
+				+ " data_type varchar(10),"
+				+ " data bytea,"
+				+ " category varchar(20),"
+				+ " data_size int,"
+				+ " PRIMARY KEY (time, group_id))");
+		
+		statement.execute("ALTER TABLE public.shared_data ALTER COLUMN data SET STORAGE EXTERNAL");
+		
+		statement.execute("CREATE TABLE IF NOT EXISTS public.group_members"
+				+ "(phone_number varchar(10) REFERENCES public.users (phone_number),"
+				+ " group_id int REFERENCES public.deceased (group_id),"
+				+ " admin boolean,"
+				+ " accepted boolean,"
+				+ " PRIMARY KEY (phone_number, group_id))");
 	}
 	
-	public int setDeceased(String name,  String bDay, String dDay) {
-		// TODO Auto-generated method stub
-		try {
-			statement.execute("CREATE TABLE IF NOT EXISTS public.deceased"
-					+ " (GroupId INT NOT NULL GENERATED ALWAYS AS IDENTITY,"
-					+ " Name varchar(30) NOT NULL,"
-					+ " BirthDate varchar(12),"
-					+ " DeceasedDate varchar(12),"
-					+ " PRIMARY KEY(GroupId))");
+	public void setData(String phoneNumber, int groupId, String type, byte[] media, String category) throws SQLException {
+		int dataSize = media.length;
+		Timestamp timestamp = new Timestamp(new java.util.Date().getTime());
+		String sqlString = "INSERT INTO public.shared_data (time, phone_number, group_id, data_type, data, category, data_size) VALUES(?, ?, ?, ?, ?, ?, ?) RETURNING group_id";
+		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
+			pst.setTimestamp(1, timestamp);
+			pst.setString(2, phoneNumber);
+			pst.setInt(3, groupId);
+			pst.setString(4, type);
+			pst.setBytes(5, media);
+			pst.setString(6, category);
+			pst.setLong(7, dataSize);
+			ResultSet resultSet = pst.executeQuery();
 			
-			String sqlString = "INSERT INTO public.Deceased (Name, BirthDate, DeceasedDate) VALUES (?, ?, ?) RETURNING GroupId";
+			
+		
+	}
+	
+	public int setDeceased(String name,  String bDay, String dDay) throws SQLException {
+
+			String sqlString = "INSERT INTO public.Deceased (name, birth_date, deceased_date) VALUES (?, ?, ?) RETURNING group_id";
 			PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
 			pst.setString(1, name);
 			pst.setString(2, bDay);
@@ -75,91 +86,95 @@ public class DatabaseClass {
 			ResultSet keys = pst.executeQuery();	
 			if(keys.next()) 
 				return keys.getInt(1);
-		} catch (SQLException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-			return 0;
-		}
-		return 0;
+			else
+				return 0;
 		
 	}
 	
-	public boolean register(String phonenumber) throws SQLException {
+	public void register(String phonenumber) throws SQLException {
 		statement = databaseConnection.createStatement();
-		String sqlString = "INSERT INTO  public.users (PhoneNumber) VALUES(?)";
-		try {
-			statement.execute("CREATE TABLE IF NOT EXISTS public.users"
-					+ "(PhoneNumber varchar(10) not NULL, "
-					+ " PRIMARY KEY (PhoneNumber))");
-			
-			PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
-			pst.setString(1, phonenumber);
-			pst.executeUpdate();
-			return true;
-		} catch (SQLException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-			return false;
-		}
+		String sqlString = "INSERT INTO  public.users (phone_number) VALUES(?)";
+		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
+		pst.setString(1, phonenumber);
+		pst.executeUpdate();
 	}
 	
 	public boolean isRegesterdUser(String phoneNumber) throws SQLException {
-		String sqlString = "SELECT * FROM public.users WHERE PhoneNumber = ?";
+		String sqlString = "SELECT * FROM public.users WHERE phone_number = ?";
 		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
 		pst.setString(1, phoneNumber);
 		ResultSet resultSet = pst.executeQuery();
 		return resultSet.next();
 	}
 	
-	public void storePendingInvites(String phoneNumber, int groupId, String groupName, boolean admin) throws SQLException {
-		statement.execute("CREATE TABLE IF NOT EXISTS public.invites"
-				+ "(PhoneNumber varchar(10) not NULL, "
-				+ " GroupId int,"
-				+ " GroupName varchar(40)"
-				+ " Admin BOOLEAN,"
-				+ " PRIMARY KEY (PhoneNumber, GroupId))");
-		String sqlString = "INSERT INTO  public.invites (PhoneNumber, GroupId, GroupName, Admin) VALUES(?, ?, ?, ?)";
+	public int membersOfGroup(String inviter, String phoneNumber, int groupId, boolean admin, String groupName, String bDate, String dDate) throws SQLException {
+		if(groupId == 0) {
+			groupId = setDeceased(groupName, bDate, dDate);
+		}
+		
+		String sqlString = "INSERT INTO  public.group_members (phone_number, group_id, admin, accepted) VALUES(?, ?, ?, false) RETURNING group_id";
 		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
 		pst.setString(1, phoneNumber);
 		pst.setInt(2, groupId);
-		pst.setString(3, groupName);
-		pst.setBoolean(4, admin);	
+		pst.setBoolean(3, admin);	
 		pst.executeQuery();
 		
+		sqlString = "INSERT INTO  public.group_members (phone_number, group_id, admin, accepted) VALUES(?, ?, true, true) RETURNING group_id";
+		pst = databaseConnection.prepareStatement(sqlString);
+		pst.setString(1, inviter);
+		pst.setInt(2, groupId);
+		pst.executeQuery();
+		return groupId;		
 	}
 	
 	public ResultSet getPendingInvites(String phoneNumber) throws SQLException {
-		String sqlString = "SELECT * FROM public.invites WHERE PhoneNumber = ?";
+		String sqlString = "SELECT group_id, admin FROM public.group_members WHERE phone_number = ? AND accepted = false";
 		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
 		pst.setString(1, phoneNumber);
 		return pst.executeQuery();
 		
 	}
 	
-	public void removePendingInvites(String phoneNumber, int groupId) throws SQLException {
-		String sqlString = "DELETE * FROM public.invites WHERE PhoneNumber = ? AND GroupId = ?";
-		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
-		pst.setString(1, phoneNumber);
-		pst.setInt(2, groupId);
-		pst.executeQuery();
-	}
 	
-	public ResultSet getUpdates(int groupId, java.sql.Timestamp lastUpdate, Timestamp now) throws SQLException {
-		String sqlString = "SELECT * FROM public.shared_data WHERE GroupId = ? AND WHERE Time BETWEEN ? AND ?";
+	
+	public ResultSet getUpdates(String phoneNumber, int groupId, Timestamp lastUpdate) throws SQLException {
+		String sqlString = "SELECT * FROM public.shared_data WHERE group_id = ? AND Time > ? AND phone_number != ?";
 		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
 		pst.setInt(1, groupId);
 		pst.setTimestamp(2, lastUpdate);
-		pst.setTimestamp(3, now);
+		pst.setString(3, phoneNumber);
 		ResultSet updatSet = pst.executeQuery();
 		return updatSet;
 		
 	}
 	
 	public void removeOldData(int groupId) throws SQLException {
-		String sqlString = "DELETE * FROM public.shared_data WHERE GroupId = ?";
+		String sqlString = "DELETE * FROM public.shared_data WHERE group_id = ?";
 		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
 		pst.setInt(1, groupId);
 		pst.executeQuery();
 	}
 
+	public void acceptInvite(String phoneNumber, int groupId) throws SQLException {
+		String sqlString = "UPDATE public.group_members SET accepted = true WHERE group_id = ? AND phone_number = ?";
+		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
+		pst.setInt(1, groupId);
+		pst.setString(2, phoneNumber);
+		pst.executeUpdate();
+	}
+
+	public void declineInvite(String phoneNumber, int groupId) throws SQLException {
+		String sqlString = "DELETE FROM public.group_members WHERE group_id = ? AND phone_number = ?";
+		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
+		pst.setInt(1, groupId);
+		pst.setString(2, phoneNumber);
+		pst.executeUpdate();
+	}
+
+	public ResultSet getDeceasedInfo(int groupId) throws SQLException {
+		String sqlString = "SELECT * FROM public.deceased WHERE group_id = ?";
+		PreparedStatement pst = databaseConnection.prepareStatement(sqlString);
+		pst.setInt(1, groupId);
+		return pst.executeQuery();
+	}
 }
